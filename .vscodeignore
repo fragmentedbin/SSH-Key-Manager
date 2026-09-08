@@ -1,0 +1,7 @@
+.github/**
+.gitignore
+CHANGELOG.md
+scripts/check-source.js
+icon/banner.png
+node_modules/**
+*.vsix

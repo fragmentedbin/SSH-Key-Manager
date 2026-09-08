@@ -1,0 +1,53 @@
+{
+  "name": "vscode-ssh-key-manager",
+  "displayName": "SSH Key Manager",
+  "description": "Set up, test, repair, and regenerate passwordless SSH keys from the VS Code Command Palette.",
+  "version": "1.2.0",
+  "publisher": "sshkey-manager-community",
+  "license": "MIT",
+  "icon": "icon/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fragmentedbin/SSH-Key-Manager.git"
+  },
+  "bugs": {
+    "url": "https://github.com/fragmentedbin/SSH-Key-Manager/issues"
+  },
+  "homepage": "https://github.com/fragmentedbin/SSH-Key-Manager#readme",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "ssh",
+    "remote-ssh",
+    "ssh-key",
+    "passwordless",
+    "remote"
+  ],
+  "extensionKind": [
+    "ui"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onCommand:sshKeyManager.open"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "sshKeyManager.open",
+        "title": "Open SSH Key Manager",
+        "category": "SSH Key Manager"
+      }
+    ]
+  },
+  "scripts": {
+    "package": "vsce package",
+    "check": "node ./scripts/check-source.js"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^3.9.2"
+  }
+}
