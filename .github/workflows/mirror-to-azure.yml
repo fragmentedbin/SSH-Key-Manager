@@ -1,0 +1,21 @@
+name: Mirror to Azure Repos
+
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - '**'
+  workflow_dispatch:
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mirror-push this repository to Azure Repos
+        env:
+          AZURE_REPOS_PAT: ${{ secrets.AZURE_REPOS_PAT }}
+        run: |
+          git clone --mirror "https://github.com/${{ github.repository }}.git" source-mirror
+          cd source-mirror
+          git push --mirror "https://AzureReposMirror:${AZURE_REPOS_PAT}@dev.azure.com/muhammadmaududy4/SSH-Key-Manager/_git/SSH-Key-Manager"
