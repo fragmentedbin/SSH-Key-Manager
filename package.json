@@ -3,7 +3,7 @@
   "displayName": "SSH Key Manager",
   "description": "Set up, test, repair, and regenerate passwordless SSH keys from the VS Code Command Palette.",
   "version": "1.2.0",
-  "publisher": "sshkey-manager-community",
+  "publisher": "Fragmentedbin",
   "license": "MIT",
   "icon": "icon/icon.png",
   "repository": {
