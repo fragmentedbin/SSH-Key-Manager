@@ -7,7 +7,7 @@ const { execFileSync } = require('child_process');
 const root = path.resolve(__dirname, '..');
 const ignored = new Set(['.git', 'node_modules']);
 const textExtensions = new Set([
-  '.js', '.json', '.md', '.ps1', '.yml', '.yaml', '.txt', '.gitignore', '.vscodeignore'
+  '.js', '.json', '.md', '.ps1', '.sh', '.yml', '.yaml', '.txt', '.gitignore', '.vscodeignore'
 ]);
 
 const suspicious = [
@@ -117,9 +117,29 @@ function checkPowerShellSyntax() {
   }
 }
 
+function checkShellSyntax() {
+  const script = path.join(root, 'scripts', 'setup-ssh-key.sh');
+
+  try {
+    execFileSync('bash', ['-n', script], { stdio: 'pipe' });
+    console.log('Shell script syntax check passed.');
+    return true;
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      console.log('Skipping shell script syntax check (bash not found).');
+      return true;
+    }
+
+    console.error('Shell script syntax check FAILED.');
+    console.error(error.stderr ? error.stderr.toString() : error.message);
+    return false;
+  }
+}
+
 const results = [
   checkJavaScriptSyntax(),
   checkPowerShellSyntax(),
+  checkShellSyntax(),
   checkHygiene()
 ];
 

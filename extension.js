@@ -7,6 +7,9 @@ const path = require('path');
 const { spawn, execFile } = require('child_process');
 
 const IS_WINDOWS = process.platform === 'win32';
+const IS_MAC = process.platform === 'darwin';
+const IS_LINUX = process.platform === 'linux';
+const IS_POSIX = IS_MAC || IS_LINUX;
 
 const WINDOWS_ROOT = process.env.SystemRoot || 'C:\\Windows';
 
@@ -18,12 +21,29 @@ const POWERSHELL = path.join(
   'powershell.exe'
 );
 
-const SSH = path.join(
-  WINDOWS_ROOT,
-  'System32',
-  'OpenSSH',
-  'ssh.exe'
-);
+const BASH = '/bin/bash';
+const OSASCRIPT = '/usr/bin/osascript';
+
+// Common Linux terminal emulators, tried in this order, each with its own
+// argv syntax for "run this command, don't just open a shell". There is no
+// Linux equivalent of AppleScript/Terminal.app - desktop environments vary,
+// so this is a best-effort chain rather than a single known-correct path.
+const LINUX_TERMINAL_CANDIDATES = [
+  { bin: '/usr/bin/gnome-terminal', buildArgs: (cmd) => ['--', BASH, '-c', cmd] },
+  { bin: '/usr/bin/konsole', buildArgs: (cmd) => ['-e', BASH, '-c', cmd] },
+  { bin: '/usr/bin/xfce4-terminal', buildArgs: (cmd) => ['-x', BASH, '-c', cmd] },
+  { bin: '/usr/bin/xterm', buildArgs: (cmd) => ['-e', BASH, '-c', cmd] }
+];
+
+// Windows OpenSSH lives under System32; macOS and Linux both ship an
+// OpenSSH client at this same fixed path. Hardcoding it (rather than
+// relying on PATH) is deliberate - it always finds the same client the
+// rest of the system uses, regardless of the calling process's environment.
+const SSH_EXE = IS_WINDOWS
+  ? path.join(WINDOWS_ROOT, 'System32', 'OpenSSH', 'ssh.exe')
+  : '/usr/bin/ssh';
+
+const TERMINAL_WINDOW_LABEL = IS_WINDOWS ? 'PowerShell' : 'Terminal';
 
 const HIDDEN_SETUP_TIMEOUT_MS = 120000;
 const INTERACTIVE_SETUP_TIMEOUT_MS = 180000;
@@ -54,16 +74,34 @@ function logLines(prefix, text) {
 }
 
 // Kills the whole process tree by PID. A plain child.kill() only signals the
-// immediate process; ssh.exe / ssh-keygen.exe launched underneath it would be
-// left running otherwise.
+// immediate process; ssh / ssh-keygen launched underneath it would be left
+// running otherwise. On Windows this uses taskkill's tree-kill flag; on
+// macOS the process is spawned detached (see runProcess), making it its own
+// process group leader, so signaling the negative PID reaches the whole
+// group instead of just that one process.
 function killProcessTree(pid) {
   return new Promise((resolve) => {
-    execFile(
-      'taskkill',
-      ['/PID', String(pid), '/T', '/F'],
-      { windowsHide: true },
-      () => resolve()
-    );
+    if (IS_WINDOWS) {
+      execFile(
+        'taskkill',
+        ['/PID', String(pid), '/T', '/F'],
+        { windowsHide: true },
+        () => resolve()
+      );
+      return;
+    }
+
+    try {
+      process.kill(-pid, 'SIGKILL');
+    } catch (groupError) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch (pidError) {
+        // Process likely already exited.
+      }
+    }
+
+    resolve();
   });
 }
 
@@ -89,6 +127,10 @@ function runProcess(file, args, { timeoutMs, env } = {}) {
     try {
       child = spawn(file, args, {
         windowsHide: true,
+        // On POSIX, detach so the child becomes its own process group
+        // leader - required for killProcessTree's negative-PID group kill
+        // to reach any grandchildren (eg. ssh-keygen) on timeout.
+        detached: !IS_WINDOWS,
         stdio: 'pipe',
         env: env || process.env
       });
@@ -258,7 +300,7 @@ async function pickHost() {
 
 async function testPasswordless(host) {
   const result = await runProcess(
-    SSH,
+    SSH_EXE,
     [
       '-o', 'BatchMode=yes',
       '-o', 'ConnectTimeout=6',
@@ -278,7 +320,8 @@ async function testPasswordless(host) {
 }
 
 function bundledScriptPath(context) {
-  return context.asAbsolutePath(path.join('scripts', 'setup-ssh-key.ps1'));
+  const scriptName = IS_POSIX ? 'setup-ssh-key.sh' : 'setup-ssh-key.ps1';
+  return context.asAbsolutePath(path.join('scripts', scriptName));
 }
 
 function formatFailure(result) {
@@ -301,6 +344,14 @@ function formatFailure(result) {
 function runHiddenSetup(context, host) {
   const script = bundledScriptPath(context);
 
+  if (IS_POSIX) {
+    return runProcess(
+      BASH,
+      [script, '--host-alias', host, '--non-interactive'],
+      { timeoutMs: HIDDEN_SETUP_TIMEOUT_MS }
+    );
+  }
+
   return runProcess(
     POWERSHELL,
     [
@@ -321,7 +372,28 @@ function powershellSingleQuote(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
 }
 
+// Safely embeds a value inside a single-quoted POSIX shell string by
+// closing the quote, appending an escaped literal quote, and reopening it -
+// the standard POSIX shell escaping rule for this case. Verified against
+// real bash (including that shell metacharacters like $() and backticks
+// stay inert inside the resulting single-quoted text).
+function posixSingleQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+// Escapes a value for embedding inside an AppleScript "..." string literal -
+// AppleScript string escaping only needs backslash and double-quote handled.
+function appleScriptQuote(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
 function runInteractiveSetup(context, host, regenerate) {
+  return IS_POSIX
+    ? runInteractiveSetupPosix(context, host, regenerate)
+    : runInteractiveSetupWindows(context, host, regenerate);
+}
+
+function runInteractiveSetupWindows(context, host, regenerate) {
   const script = bundledScriptPath(context);
 
   // Passing -HostAlias through Start-Process's -ArgumentList was tested and
@@ -359,6 +431,209 @@ function runInteractiveSetup(context, host, regenerate) {
       }
     }
   );
+}
+
+// Finds the first available Linux terminal emulator from
+// LINUX_TERMINAL_CANDIDATES. Returns null if none of them are installed -
+// there is no single standard terminal on Linux the way there is on macOS.
+function findLinuxTerminal() {
+  for (const candidate of LINUX_TERMINAL_CANDIDATES) {
+    if (fs.existsSync(candidate.bin)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+// Builds the {file, args} needed to launch a real, visible terminal window
+// running shellCommand. Returns null only on Linux, when no candidate
+// terminal emulator could be found at all.
+function buildTerminalLaunch(shellCommand) {
+  if (IS_MAC) {
+    const appleScript =
+      'tell application "Terminal"\n' +
+      'activate\n' +
+      `do script "${appleScriptQuote(shellCommand)}"\n` +
+      'end tell';
+
+    return { file: OSASCRIPT, args: ['-e', appleScript] };
+  }
+
+  const terminal = findLinuxTerminal();
+
+  return terminal ? { file: terminal.bin, args: terminal.buildArgs(shellCommand) } : null;
+}
+
+// Neither macOS nor Linux have an equivalent of PowerShell's Start-Process
+// -WindowStyle Normal, so the visible password-entry window is a real
+// terminal window/tab launched via a platform-specific mechanism
+// (AppleScript + Terminal.app on macOS; a best-effort terminal-emulator
+// chain on Linux, since there is no single standard there). That launch
+// step returns as soon as the terminal has been told to run something - it
+// does not wait for the command to finish - so completion is detected by
+// having the launched shell write its own exit code to a sentinel file
+// that this function polls for, with the same overall timeout as the
+// Windows path. A PID file written by the same shell command lets a
+// timeout actually kill the process group, mirroring killProcessTree's
+// tree-kill on Windows.
+function runInteractiveSetupPosix(context, host, regenerate) {
+  const script = bundledScriptPath(context);
+  const token = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const sentinelPath = path.join(os.tmpdir(), `sshkeymgr-status-${token}`);
+  const pidPath = path.join(os.tmpdir(), `sshkeymgr-pid-${token}`);
+
+  const scriptArgs = [script, '--host-alias', host];
+
+  if (regenerate) {
+    scriptArgs.push('--regenerate');
+  }
+
+  const shellCommand =
+    `echo $$ > ${posixSingleQuote(pidPath)}; ` +
+    `${posixSingleQuote(BASH)} ${scriptArgs.map(posixSingleQuote).join(' ')}; ` +
+    `echo $? > ${posixSingleQuote(sentinelPath)}; ` +
+    `exit`;
+
+  const launch = buildTerminalLaunch(shellCommand);
+
+  if (!launch) {
+    const error = new Error(
+      'No supported terminal emulator was found (tried gnome-terminal, konsole, xfce4-terminal, xterm).'
+    );
+
+    logOutput(error.message);
+
+    return Promise.resolve({ code: null, stdout: '', stderr: '', error, timedOut: false });
+  }
+
+  logOutput(
+    `Running ${path.basename(launch.file)} (interactive window) (timeout ${INTERACTIVE_SETUP_TIMEOUT_MS}ms).`
+  );
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let poller = null;
+    let deadline = null;
+
+    function cleanupFiles() {
+      try { fs.unlinkSync(sentinelPath); } catch (cleanupError) { /* already gone */ }
+      try { fs.unlinkSync(pidPath); } catch (cleanupError) { /* already gone */ }
+    }
+
+    function finish(result) {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+
+      if (poller) {
+        clearInterval(poller);
+      }
+
+      if (deadline) {
+        clearTimeout(deadline);
+      }
+
+      cleanupFiles();
+      resolve(result);
+    }
+
+    let launchProcess;
+
+    try {
+      launchProcess = spawn(launch.file, launch.args, { stdio: 'pipe' });
+    } catch (spawnError) {
+      logOutput(`${path.basename(launch.file)} failed to start: ${spawnError.message}`);
+      finish({ code: null, stdout: '', stderr: '', error: spawnError, timedOut: false });
+      return;
+    }
+
+    let launchStderr = '';
+
+    launchProcess.stderr.on('data', (chunk) => {
+      launchStderr += chunk.toString();
+    });
+
+    launchProcess.once('error', (error) => {
+      logOutput(`${path.basename(launch.file)} process error: ${error.message}`);
+      finish({ code: null, stdout: '', stderr: '', error, timedOut: false });
+    });
+
+    launchProcess.once('close', (launchCode) => {
+      if (settled) {
+        return;
+      }
+
+      // Some terminal emulators (eg. gnome-terminal, which hands the
+      // command off to an already-running instance) exit almost
+      // immediately - well before the launched command finishes. A
+      // non-zero exit here only means the terminal itself failed to
+      // start, not that the script inside it failed.
+      if (launchCode !== 0) {
+        logOutput(`${path.basename(launch.file)} exited with code ${launchCode}: ${launchStderr.trim()}`);
+
+        finish({
+          code: launchCode,
+          stdout: '',
+          stderr: launchStderr,
+          error: new Error(`Failed to open a terminal window: ${launchStderr.trim() || 'unknown error'}`),
+          timedOut: false
+        });
+
+        return;
+      }
+
+      poller = setInterval(() => {
+        if (!fs.existsSync(sentinelPath)) {
+          return;
+        }
+
+        let code = null;
+
+        try {
+          code = parseInt(fs.readFileSync(sentinelPath, 'utf8').trim(), 10);
+        } catch (readError) {
+          code = null;
+        }
+
+        logOutput(`Interactive setup finished with exit code ${code}.`);
+
+        finish({
+          code,
+          stdout: '',
+          stderr: '',
+          error: code === 0 ? null : new Error(`Interactive setup exited with code ${code}.`),
+          timedOut: false
+        });
+      }, 1000);
+
+      deadline = setTimeout(() => {
+        logOutput(`Interactive setup timed out after ${INTERACTIVE_SETUP_TIMEOUT_MS}ms. Terminating.`);
+
+        let pid = null;
+
+        try {
+          pid = parseInt(fs.readFileSync(pidPath, 'utf8').trim(), 10);
+        } catch (readError) {
+          pid = null;
+        }
+
+        if (pid) {
+          killProcessTree(pid);
+        }
+
+        finish({
+          code: null,
+          stdout: '',
+          stderr: '',
+          error: new Error(`Interactive setup timed out after ${INTERACTIVE_SETUP_TIMEOUT_MS}ms.`),
+          timedOut: true
+        });
+      }, INTERACTIVE_SETUP_TIMEOUT_MS);
+    });
+  });
 }
 
 async function setupHost(context, selectedHost) {
@@ -422,7 +697,7 @@ async function setupHost(context, selectedHost) {
     [
       {
         label: '$(key) Continue',
-        description: 'Open a local PowerShell window for the server password',
+        description: `Open a local ${TERMINAL_WINDOW_LABEL} window for the server password`,
         action: 'continue'
       },
       {
@@ -432,7 +707,7 @@ async function setupHost(context, selectedHost) {
     ],
     {
       title: `Password required for ${host}`,
-      placeHolder: 'The password is handled directly by Windows OpenSSH'
+      placeHolder: 'The password is handled directly by OpenSSH'
     }
   );
 
@@ -442,7 +717,7 @@ async function setupHost(context, selectedHost) {
   }
 
   vscode.window.setStatusBarMessage(
-    `$(key) SSH Key Manager: complete the password prompt in the opened PowerShell window for ${host}.`,
+    `$(key) SSH Key Manager: complete the password prompt in the opened ${TERMINAL_WINDOW_LABEL} window for ${host}.`,
     15000
   );
 
@@ -454,7 +729,7 @@ async function setupHost(context, selectedHost) {
     },
     async (progress) => {
       progress.report({
-        message: 'Waiting for the password prompt in the opened PowerShell window...'
+        message: `Waiting for the password prompt in the opened ${TERMINAL_WINDOW_LABEL} window...`
       });
 
       return runInteractiveSetup(context, host, false);
@@ -543,7 +818,7 @@ async function regenerateHost(context, selectedHost) {
   logOutput(`Key regeneration requested for host="${host}" hostname="${selectedHost.hostname}".`);
 
   vscode.window.setStatusBarMessage(
-    `$(key) SSH Key Manager: complete any prompts in the opened PowerShell window for ${host}.`,
+    `$(key) SSH Key Manager: complete any prompts in the opened ${TERMINAL_WINDOW_LABEL} window for ${host}.`,
     15000
   );
 
@@ -555,7 +830,7 @@ async function regenerateHost(context, selectedHost) {
     },
     async (progress) => {
       progress.report({
-        message: 'Waiting for key regeneration to finish in the opened PowerShell window...'
+        message: `Waiting for key regeneration to finish in the opened ${TERMINAL_WINDOW_LABEL} window...`
       });
 
       return runInteractiveSetup(context, host, true);
@@ -592,16 +867,16 @@ async function regenerateHost(context, selectedHost) {
 }
 
 async function runManager(context) {
-  if (!IS_WINDOWS) {
+  if (!IS_WINDOWS && !IS_POSIX) {
     vscode.window.showErrorMessage(
-      'SSH Key Manager currently supports Windows as the local VS Code client.'
+      'SSH Key Manager currently supports Windows, macOS, and Linux as the local VS Code client.'
     );
 
     return;
   }
 
-  if (!fs.existsSync(SSH)) {
-    vscode.window.showErrorMessage('Windows OpenSSH Client was not found.');
+  if (!fs.existsSync(SSH_EXE)) {
+    vscode.window.showErrorMessage(`OpenSSH client was not found at ${SSH_EXE}.`);
     return;
   }
 

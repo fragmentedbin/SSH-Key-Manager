@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.0
+
+- Added macOS and Linux support. A new `scripts/setup-ssh-key.sh` (POSIX bash) mirrors `setup-ssh-key.ps1` function for function - same config parsing, shared-`IdentityFile` protection, and base64 remote-script transport. Verified locally: config parsing, shared-key detection, config-file editing (including idempotency), and the remote install/remove logic (including the exact tricky-key-comment case that caused the 1.1.2 incident) were all exercised directly through bash, plus a two-layer POSIX-shell/AppleScript quoting round-trip test.
+- The visible password-entry window now has three platform-specific implementations behind one shared completion-detection mechanism (a sentinel file + PID file the launched shell writes, polled with the same timeout/kill behavior as Windows): PowerShell's `Start-Process` on Windows, AppleScript driving Terminal.app on macOS, and a best-effort chain (GNOME Terminal, Konsole, xfce4-terminal, xterm) on Linux, since Linux has no single standard terminal automation API.
+- macOS and Linux support has not been tested on real hardware (developed and verified entirely from Windows) - please report any issues.
+
 ## 1.2.0
 
 - Added a marketplace icon (`icon/icon.png`) and a README banner (`icon/banner.png`, excluded from the packaged VSIX).
