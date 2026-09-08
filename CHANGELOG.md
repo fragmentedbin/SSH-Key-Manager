@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.1
+
+- No extension functionality changes. Adds a GitHub Actions workflow that mirrors this repository to Azure Repos on every push, and this release exists to verify the tag-triggered GitHub Release workflow end-to-end.
+
 ## 1.3.0
 
 - Added macOS and Linux support. A new `scripts/setup-ssh-key.sh` (POSIX bash) mirrors `setup-ssh-key.ps1` function for function - same config parsing, shared-`IdentityFile` protection, and base64 remote-script transport. Verified locally: config parsing, shared-key detection, config-file editing (including idempotency), and the remote install/remove logic (including the exact tricky-key-comment case that caused the 1.1.2 incident) were all exercised directly through bash, plus a two-layer POSIX-shell/AppleScript quoting round-trip test.
