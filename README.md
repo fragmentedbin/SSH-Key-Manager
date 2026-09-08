@@ -62,7 +62,7 @@ No server names, usernames, addresses, or credentials are hardcoded in the exten
 Or from a local terminal:
 
 ```powershell
-code --install-extension .\vscode-ssh-key-manager-1.3.1.vsix
+code --install-extension .\vscode-ssh-key-manager-1.3.2.vsix
 ```
 
 ## Usage
@@ -133,7 +133,7 @@ npm run package
 The resulting `.vsix` can be installed locally with:
 
 ```powershell
-code --install-extension .\vscode-ssh-key-manager-1.3.1.vsix --force
+code --install-extension .\vscode-ssh-key-manager-1.3.2.vsix --force
 ```
 
 ## Releasing
@@ -141,8 +141,8 @@ code --install-extension .\vscode-ssh-key-manager-1.3.1.vsix --force
 Push a tag such as:
 
 ```bash
-git tag v1.3.1
-git push origin v1.3.1
+git tag v1.3.2
+git push origin v1.3.2
 ```
 
 The included GitHub Actions workflow packages the VSIX and attaches it to a GitHub Release.
