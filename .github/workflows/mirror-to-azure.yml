@@ -16,6 +16,11 @@ jobs:
         env:
           AZURE_REPOS_PAT: ${{ secrets.AZURE_REPOS_PAT }}
         run: |
-          git clone --mirror "https://github.com/${{ github.repository }}.git" source-mirror
+          # --bare (not --mirror) deliberately excludes GitHub's synthetic
+          # refs/pull/*/head refs - Azure Repos rejects pushes into that
+          # namespace ("can only be performed by the system"), which made
+          # the whole mirror push fail even though every real branch and
+          # tag had already synced correctly.
+          git clone --bare "https://github.com/${{ github.repository }}.git" source-mirror
           cd source-mirror
           git push --mirror "https://AzureReposMirror:${AZURE_REPOS_PAT}@dev.azure.com/muhammadmaududy4/SSH-Key-Manager/_git/SSH-Key-Manager"
