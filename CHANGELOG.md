@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.2
+
+- No extension functionality changes. Wires up automatic Marketplace publishing on every version tag (`release.yml` now runs `vsce publish` using the `VSCE_PAT` secret); this release exists to verify that end-to-end.
+
 ## 1.3.1
 
 - No extension functionality changes. Adds a GitHub Actions workflow that mirrors this repository to Azure Repos on every push, and this release exists to verify the tag-triggered GitHub Release workflow end-to-end.
