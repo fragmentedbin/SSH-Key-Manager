@@ -8,6 +8,15 @@ on:
       - '**'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+# Queue overlapping runs rather than letting two `git push --mirror` calls
+# race against the same Azure remote at once.
+concurrency:
+  group: mirror-to-azure
+  cancel-in-progress: false
+
 jobs:
   mirror:
     runs-on: ubuntu-latest
@@ -16,6 +25,8 @@ jobs:
         env:
           AZURE_REPOS_PAT: ${{ secrets.AZURE_REPOS_PAT }}
         run: |
+          set -o pipefail
+
           # --bare (not --mirror) deliberately excludes GitHub's synthetic
           # refs/pull/*/head refs - Azure Repos rejects pushes into that
           # namespace ("can only be performed by the system"), which made
@@ -23,4 +34,18 @@ jobs:
           # tag had already synced correctly.
           git clone --bare "https://github.com/${{ github.repository }}.git" source-mirror
           cd source-mirror
-          git push --mirror "https://AzureReposMirror:${AZURE_REPOS_PAT}@dev.azure.com/muhammadmaududy4/SSH-Key-Manager/_git/SSH-Key-Manager"
+          git push --mirror "https://AzureReposMirror:${AZURE_REPOS_PAT}@dev.azure.com/muhammadmaududy4/SSH-Key-Manager/_git/SSH-Key-Manager" \
+            | tee "$GITHUB_WORKSPACE/push-output.log"
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "### Azure Repos mirror"
+            echo ""
+            echo "Triggered by \`${{ github.event_name }}\` on \`${{ github.ref_name }}\`"
+            echo ""
+            echo '```'
+            cat "$GITHUB_WORKSPACE/push-output.log" 2>/dev/null || echo "(no output captured)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
